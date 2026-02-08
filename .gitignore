@@ -5,7 +5,7 @@
 *.png
 *.pyc
 *.svg
-*.txt
+.txt
 *~
 .#*
 R/*
