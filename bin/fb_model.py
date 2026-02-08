@@ -1,5 +1,6 @@
 import torch
 from esm import Alphabet, FastaBatchedDataset, ProteinBertModel, pretrained
+from esm.data import Alphabet
 import numpy as np
 import warnings
 
