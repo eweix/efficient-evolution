@@ -5,27 +5,24 @@
 #
 # Modified by Brian Hie (brianhie@stanford.edu).
 
-import argparse
-import pathlib
 
-import torch
+from typing import List
 
-from esm import Alphabet, FastaBatchedDataset, ProteinBertModel, pretrained, MSATransformer
-import pandas as pd
-from tqdm import tqdm
-from Bio import SeqIO
-import itertools
-from typing import List, Tuple
-import scipy.stats as ss
 import matplotlib.pyplot as plt
+import pandas as pd
+import scipy.stats as ss
 import seaborn as sns
-
+import torch
+from esm import pretrained
+from tqdm import tqdm
 from utils import deep_mutational_scan
 
 
 def label_row(row, sequence, token_probs, alphabet, offset_idx):
     wt, idx, mt = row[0], int(row[1:-1]) - offset_idx, row[-1]
-    assert sequence[idx] == wt, "The listed wildtype does not match the provided sequence"
+    assert sequence[idx] == wt, (
+        "The listed wildtype does not match the provided sequence"
+    )
 
     wt_encoded, mt_encoded = alphabet.get_idx(wt), alphabet.get_idx(mt)
 
@@ -36,7 +33,9 @@ def label_row(row, sequence, token_probs, alphabet, offset_idx):
 
 def compute_pppl(row, sequence, model, alphabet, offset_idx):
     wt, idx, mt = row[0], int(row[1:-1]) - offset_idx, row[-1]
-    assert sequence[idx] == wt, "The listed wildtype does not match the provided sequence"
+    assert sequence[idx] == wt, (
+        "The listed wildtype does not match the provided sequence"
+    )
 
     # modify the sequence
     sequence = sequence[:idx] + mt + sequence[(idx + 1) :]
@@ -58,26 +57,29 @@ def compute_pppl(row, sequence, model, alphabet, offset_idx):
         batch_tokens_masked = batch_tokens.clone()
         batch_tokens_masked[0, i] = alphabet.mask_idx
         with torch.no_grad():
-            token_probs = torch.log_softmax(model(batch_tokens_masked.cuda())["logits"], dim=-1)
-        log_probs.append(token_probs[0, i, alphabet.get_idx(sequence[i])].item())  # vocab size
+            token_probs = torch.log_softmax(
+                model(batch_tokens_masked.cuda())["logits"], dim=-1
+            )
+        log_probs.append(
+            token_probs[0, i, alphabet.get_idx(sequence[i])].item()
+        )  # vocab size
     return sum(log_probs)
 
 
 def predict_esm(
-        sequence: str,
-        model_locations: List[str],
-        scoring_strategy: str = 'wt-marginals',
-        mutation_col: str = 'mutant',
-        offset_idx: int = 0,
-        nogpu: bool = False,
-        verbose: int = 0,
+    sequence: str,
+    model_locations: List[str],
+    scoring_strategy: str = "wt-marginals",
+    mutation_col: str = "mutant",
+    offset_idx: int = 0,
+    nogpu: bool = False,
+    verbose: int = 0,
 ):
     # Conduct the deep mutational scan.
     data = [
-        f'{wt}{pos + offset_idx}{mt}'
-        for pos, wt, mt in deep_mutational_scan(sequence)
+        f"{wt}{pos + offset_idx}{mt}" for pos, wt, mt in deep_mutational_scan(sequence)
     ]
-    df = pd.DataFrame(data, columns=[ mutation_col ])
+    df = pd.DataFrame(data, columns=[mutation_col])
 
     # inference for each model
     for model_location in model_locations:
@@ -149,71 +151,67 @@ def predict_esm(
 
 if __name__ == "__main__":
     seqs_abs = {
-        'medi_vh': 'QVQLQQSGPGLVKPSQTLSLTCAISGDSVSSYNAVWNWIRQSPSRGLEWLGRTYYRSGWYNDYAESVKSRITINPDTSKNQFSLQLNSVTPEDTAVYYCARSGHITVFGVNVDAFDMWGQGTMVTVSS',
-        'uca_vh': 'QVQLQQSGPGLVKPSQTLSLTCAISGDSVSSNSAAWNWIRQSPSRGLEWLGRTYYRSKWYNDYAVSVKSRITINPDTSKNQFSLQLNSVTPEDTAVYYCARGGHITIFGVNIDAFDIWGQGTMVTVSS',
-        'mab114_vh': 'EVQLVESGGGLIQPGGSLRLSCAASGFALRMYDMHWVRQTIDKRLEWVSAVGPSGDTYYADSVKGRFAVSRENAKNSLSLQMNSLTAGDTAIYYCVRSDRGVAGLFDSWGQGILVTVSS',
-        'mU_vh': 'EVQLVESGGGLVQPGGSLRLSCAASGFTFSSYDMHWVRQATGKGLEWVSAIGTAGDTYYPGSVKGRFTISRENAKNSLYLQMNSLRAGDTAVYYCVRSDRGVAGLFDSWGQGTLVTVSS',
-        's309_vh': 'QVQLVQSGAEVKKPGASVKVSCKASGYPFTSYGISWVRQAPGQGLEWMGWISTYNGNTNYAQKFQGRVTMTTDTSTTTGYMELRRLRSDDTAVYYCARDYTRGAWFGESLIGGFDNWGQGTLVTVSS',
-        'r7_vh': 'QVQLVESGGGVVQPGRSLRLSCAASGFTFSNYAMYWVRQAPGKGLEWVAVISYDGSNKYYADSVKGRFTISRDNSKNTLYLQMNSLRTEDTAVYYCASGSDYGDYLLVYWGQGTLVTVSS',
-        'c143_vh': 'EVQLVESGGGLVQPGGSLRLSCAASGFSVSTKYMTWVRQAPGKGLEWVSVLYSGGSDYYADSVKGRFTISRDNSKNALYLQMNSLRVEDTGVYYCARDSSEVRDHPGHPGRSVGAFDIWGQGTMVTVSS',
-        
-        'medi_vl': 'DIQMTQSPSSLSASVGDRVTITCRTSQSLSSYTHWYQQKPGKAPKLLIYAASSRGSGVPSRFSGSGSGTDFTLTISSLQPEDFATYYCQQSRTFGQGTKVEIK',
-        'uca_vl': 'DIQMTQSPSSLSASVGDRVTITCRASQSISSYLNWYQQKPGKAPKLLIYAASSLQSGVPSRFSGSGSGTDFTLTISSLQPEDFATYYCQQSRTFGQGTKVEIK',
-        'mab114_vl': 'DIQMTQSPSSLSASVGDRITITCRASQAFDNYVAWYQQRPGKVPKLLISAASALHAGVPSRFSGSGSGTHFTLTISSLQPEDVATYYCQNYNSAPLTFGGGTKVEIK',
-        'mU_vl': 'DIQMTQSPSSLSASVGDRVTITCRASQGISNYLAWYQQKPGKVPKLLIYAASTLQSGVPSRFSGSGSGTDFTLTISSLQPEDVATYYCQKYNSAPLTFGGGTKVEIK',
-        's309_vl': 'EIVLTQSPGTLSLSPGERATLSCRASQTVSSTSLAWYQQKPGQAPRLLIYGASSRATGIPDRFSGSGSGTDFTLTISRLEPEDFAVYYCQQHDTSLTFGGGTKVEIK',
-        'r7_vl': 'QSALTQPASVSGSPGQSITISCTGTSSDVGGYNYVSWYQQHPGKAPKLMIYDVSKRPSGVSNRFSGSKSGNTASLTISGLQSEDEADYYCNSLTSISTWVFGGGTKLTVL',
-        'c143_vl': 'QSALTQPASVSGSPGQSITISCTGTSNDVGSYTLVSWYQQYPGKAPKLLIFEGTKRSSGISNRFSGSKSGNTASLTISGLQGEDEADYYCCSYAGASTFVFGGGTKLTVL',
+        "medi_vh": "QVQLQQSGPGLVKPSQTLSLTCAISGDSVSSYNAVWNWIRQSPSRGLEWLGRTYYRSGWYNDYAESVKSRITINPDTSKNQFSLQLNSVTPEDTAVYYCARSGHITVFGVNVDAFDMWGQGTMVTVSS",
+        "uca_vh": "QVQLQQSGPGLVKPSQTLSLTCAISGDSVSSNSAAWNWIRQSPSRGLEWLGRTYYRSKWYNDYAVSVKSRITINPDTSKNQFSLQLNSVTPEDTAVYYCARGGHITIFGVNIDAFDIWGQGTMVTVSS",
+        "mab114_vh": "EVQLVESGGGLIQPGGSLRLSCAASGFALRMYDMHWVRQTIDKRLEWVSAVGPSGDTYYADSVKGRFAVSRENAKNSLSLQMNSLTAGDTAIYYCVRSDRGVAGLFDSWGQGILVTVSS",
+        "mU_vh": "EVQLVESGGGLVQPGGSLRLSCAASGFTFSSYDMHWVRQATGKGLEWVSAIGTAGDTYYPGSVKGRFTISRENAKNSLYLQMNSLRAGDTAVYYCVRSDRGVAGLFDSWGQGTLVTVSS",
+        "s309_vh": "QVQLVQSGAEVKKPGASVKVSCKASGYPFTSYGISWVRQAPGQGLEWMGWISTYNGNTNYAQKFQGRVTMTTDTSTTTGYMELRRLRSDDTAVYYCARDYTRGAWFGESLIGGFDNWGQGTLVTVSS",
+        "r7_vh": "QVQLVESGGGVVQPGRSLRLSCAASGFTFSNYAMYWVRQAPGKGLEWVAVISYDGSNKYYADSVKGRFTISRDNSKNTLYLQMNSLRTEDTAVYYCASGSDYGDYLLVYWGQGTLVTVSS",
+        "c143_vh": "EVQLVESGGGLVQPGGSLRLSCAASGFSVSTKYMTWVRQAPGKGLEWVSVLYSGGSDYYADSVKGRFTISRDNSKNALYLQMNSLRVEDTGVYYCARDSSEVRDHPGHPGRSVGAFDIWGQGTMVTVSS",
+        "medi_vl": "DIQMTQSPSSLSASVGDRVTITCRTSQSLSSYTHWYQQKPGKAPKLLIYAASSRGSGVPSRFSGSGSGTDFTLTISSLQPEDFATYYCQQSRTFGQGTKVEIK",
+        "uca_vl": "DIQMTQSPSSLSASVGDRVTITCRASQSISSYLNWYQQKPGKAPKLLIYAASSLQSGVPSRFSGSGSGTDFTLTISSLQPEDFATYYCQQSRTFGQGTKVEIK",
+        "mab114_vl": "DIQMTQSPSSLSASVGDRITITCRASQAFDNYVAWYQQRPGKVPKLLISAASALHAGVPSRFSGSGSGTHFTLTISSLQPEDVATYYCQNYNSAPLTFGGGTKVEIK",
+        "mU_vl": "DIQMTQSPSSLSASVGDRVTITCRASQGISNYLAWYQQKPGKVPKLLIYAASTLQSGVPSRFSGSGSGTDFTLTISSLQPEDVATYYCQKYNSAPLTFGGGTKVEIK",
+        "s309_vl": "EIVLTQSPGTLSLSPGERATLSCRASQTVSSTSLAWYQQKPGQAPRLLIYGASSRATGIPDRFSGSGSGTDFTLTISRLEPEDFAVYYCQQHDTSLTFGGGTKVEIK",
+        "r7_vl": "QSALTQPASVSGSPGQSITISCTGTSSDVGGYNYVSWYQQHPGKAPKLMIYDVSKRPSGVSNRFSGSKSGNTASLTISGLQSEDEADYYCNSLTSISTWVFGGGTKLTVL",
+        "c143_vl": "QSALTQPASVSGSPGQSITISCTGTSNDVGSYTLVSWYQQYPGKAPKLLIFEGTKRSSGISNRFSGSKSGNTASLTISGLQGEDEADYYCCSYAGASTFVFGGGTKLTVL",
     }
 
     model_locations = [
-        'esm1b_t33_650M_UR50S',
-        'esm1v_t33_650M_UR90S_1',
-        'esm1v_t33_650M_UR90S_2',
-        'esm1v_t33_650M_UR90S_3',
-        'esm1v_t33_650M_UR90S_4',
-        'esm1v_t33_650M_UR90S_5',
+        "esm1b_t33_650M_UR50S",
+        "esm1v_t33_650M_UR90S_1",
+        "esm1v_t33_650M_UR90S_2",
+        "esm1v_t33_650M_UR90S_3",
+        "esm1v_t33_650M_UR90S_4",
+        "esm1v_t33_650M_UR90S_5",
     ]
 
     data = []
     for seq_name in seqs_abs:
         for model_location in model_locations:
             df_wt_marginals = predict_esm(
-                seqs_abs[seq_name], [ model_location ],
-                scoring_strategy='wt-marginals',
+                seqs_abs[seq_name],
+                [model_location],
+                scoring_strategy="wt-marginals",
             )
             df_masked_marginals = predict_esm(
-                seqs_abs[seq_name], [ model_location ],
-                scoring_strategy='masked-marginals',
+                seqs_abs[seq_name],
+                [model_location],
+                scoring_strategy="masked-marginals",
             )
             corr, _ = ss.spearmanr(
                 df_wt_marginals[model_location],
                 df_masked_marginals[model_location],
             )
-            print(f'{seq_name}\t{model_location}\t{corr}')
+            print(f"{seq_name}\t{model_location}\t{corr}")
             plt.figure()
             plt.scatter(
                 df_wt_marginals[model_location],
                 df_masked_marginals[model_location],
             )
-            plt.xlabel('WT marginals')
-            plt.ylabel('Masked marginals')
-            plt.title(f'{seq_name}, {model_location}, Spearman r = {corr:.03}')
+            plt.xlabel("WT marginals")
+            plt.ylabel("Masked marginals")
+            plt.title(f"{seq_name}, {model_location}, Spearman r = {corr:.03}")
             plt.savefig(
-                f'figures/esm_marginal_scatter/{seq_name}_{model_location}.png',
-                dpi=500
+                f"figures/esm_marginal_scatter/{seq_name}_{model_location}.png", dpi=500
             )
             plt.close()
 
-            data.append([
-                seq_name,
-                model_location,
-                corr
-            ])
+            data.append([seq_name, model_location, corr])
 
-    df = pd.DataFrame(data, columns=[ 'name', 'model', 'corr' ])
+    df = pd.DataFrame(data, columns=["name", "model", "corr"])
     plt.figure()
-    sns.barplot(data=df, x='name', y='corr', hue='model')
-    plt.ylim([ .8, 1.01 ])
-    plt.savefig('figures/esm_marginal_summary.svg')
+    sns.barplot(data=df, x="name", y="corr", hue="model")
+    plt.ylim([0.8, 1.01])
+    plt.savefig("figures/esm_marginal_summary.svg")
     plt.close()
